@@ -145,7 +145,7 @@ def main():
             # Pre-processing Data
             threshold = 1; column_to_partition = 'Symbol'
             processed_data, time_info = dp.partition_multi_seq(real_df, threshold, column_to_partition);
-            save_dir = 'TimeAutoDiff/Models/nasdaq_pretrained'
+            save_dir = os.path.join(train_dir,'TimeAutoDiff/Models/nasdaq_pretrained')
             start_vae_pretraining(processed_data, time_info, real_df, real_df1, column_to_partition, threshold, save_dir)
 
 

@@ -390,14 +390,12 @@ def pre_train_vae(public_df, processed_data, channels, hidden_size, num_layers, 
                 best_train_loss = loss_Auto
 
     # Save pre-trained weights
-        torch.save({
-            'encoder_mu': ae.encoder_mu.state_dict(),
-            'encoder_logvar': ae.encoder_logvar.state_dict(),
-            'fc_mu': ae.fc_mu.state_dict(),
-            'fc_logvar': ae.fc_logvar.state_dict(),
-        }, os.path.join(save_dir, "pretrained_encoder.pth"))
+    torch.save({
+        'encoder_mu': ae.encoder_mu.state_dict(),
+        'encoder_logvar': ae.encoder_logvar.state_dict(),
+        'fc_mu': ae.fc_mu.state_dict(),
+        'fc_logvar': ae.fc_logvar.state_dict(),
+    }, os.path.join(save_dir, "pretrained_encoder.pth"))
 
-        torch.save(ae.decoder_mlp.state_dict(), os.path.join(save_dir, "pretrained_decoder.pth"))
-        print(f"Pre-trained VAE saved to {save_dir}")
-
-# def fine_tune_autoencoder()
+    torch.save(ae.decoder_mlp.state_dict(), os.path.join(save_dir, "pretrained_decoder.pth"))
+    print(f"Pre-trained VAE saved to {save_dir}")
