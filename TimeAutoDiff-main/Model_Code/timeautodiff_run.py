@@ -50,14 +50,16 @@ def train_ae(
     processed_data,
     time_info,
     config,
-    column_to_partition,
+    column_to_partition=None,
     save_path=None,
     load_path=None,
 ):
     """Train or load autoencoder model."""
     # # Ensure data is on correct device
-    real_df = real_df.drop(column_to_partition, axis=1)
+    if column_to_partition:
+        real_df = real_df.drop(column_to_partition, axis=1)
     # Train autoencoder
+    processed_data.to(config["device"])
     ae_results = tae.train_autoencoder(
         real_df,
         processed_data,
@@ -217,12 +219,11 @@ def main():
     # Autoencoder configuration
     ae_config = {
         "channels": 64,
-        "hidden_size": 200,  # Different from diffusion
-        "num_layers": 1,  # Different from diffusion
+        "hidden_size": 200,
+        "num_layers": 1,
         "lr": 2e-4,
         "weight_decay": 1e-6,
-        # 'n_epochs': 20000,
-        "n_epochs": 100,
+        "n_epochs": 20000,
         "batch_size": 50,
         "threshold": 1,
         "min_beta": 1e-5,
@@ -235,8 +236,8 @@ def main():
 
     # Diffusion configuration
     diff_config = {
-        "hidden_size": 250,  # Updated for diffusion
-        "num_layers": 2,  # Updated for diffusion
+        "hidden_size": 250,
+        "num_layers": 2,
         "n_epochs": 20000,
         "n_steps": 100,
         "device": device,
@@ -251,10 +252,7 @@ def main():
 
     # Train autoencoder
     print("Training/loading autoencoder...")
-    print(real_df1.head())
-    print(processed_data.shape)
-    print(time_info.shape)
-    print(real_df.head())
+
     ae_results = train_ae(
         real_df1,
         processed_data,

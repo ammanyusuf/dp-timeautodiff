@@ -165,5 +165,7 @@ cython_debug/
 *.ipynb_checkpoints
 *.vscode
 
-TimeAutoDiff-main/Dataset/
-TimeAutoDiff-main/Model Code/MIMIC_processor.py
+# TimeAutoDiff-main/Dataset/
+MIMIC-IV/
+experiments/
+MIMIC_IV_Data_Pipeline/
