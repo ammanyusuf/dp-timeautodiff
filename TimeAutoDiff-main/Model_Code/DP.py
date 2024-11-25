@@ -134,7 +134,7 @@ def splitTimeData(real_df, seq_len):
     # Flip the data to make chronological data
     # Normalize the data
     df2 = cyclical_encode(real_df); tlen = df2.shape[1]
-    time_info = torch.tensor(df2.iloc[:,-8:].values).numpy()
+    time_info = torch.tensor(df2.iloc[:,-8:].values, dtype=torch.float32).numpy()
       
     batch_size = len(time_info) - seq_len
 
@@ -145,7 +145,7 @@ def splitTimeData(real_df, seq_len):
         _x = time_info[i:i + seq_len]
         temp_data.append(_x)
 
-    data = torch.tensor(temp_data)
+    data = torch.tensor(temp_data, dtype=torch.float32)
     
     return data
 
