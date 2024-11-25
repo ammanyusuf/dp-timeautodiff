@@ -171,8 +171,8 @@ def get_loss(model, x, t, time_info = None):
 
 #####################################################################################################################
 import copy
-import tqdm.notebook
 import random
+from rich.progress import Progress
 
 def train_diffusion(latent_features, time_info, hidden_dim, num_layers, diffusion_steps, n_epochs):
     input_size = latent_features.shape[2]
@@ -187,18 +187,20 @@ def train_diffusion(latent_features, time_info, hidden_dim, num_layers, diffusio
     batch_size = diffusion_steps
 
     all_indices = list(range(x.shape[0]))
-    tqdm_epoch = tqdm.notebook.trange(n_epochs)
+    
+    with Progress() as progress:
+        task = progress.add_task("[cyan]Training diffusion model...", total=n_epochs)
+        
+        for epoch in range(n_epochs):
+            batch_indices = random.sample(all_indices, batch_size)
+            optim.zero_grad()
+            t = torch.rand(diffusion_steps, T, 1).sort(1)[0].to(device)
+            loss = get_loss(model, x[batch_indices,:,:], t, time_info[batch_indices,:,:])
+            loss.backward()
+            optim.step()
+            ema.step_ema(ema_model, model)
 
-    for epoch in tqdm_epoch:
-        batch_indices = random.sample(all_indices, batch_size)
-        optim.zero_grad()
-        t = torch.rand(diffusion_steps, T, 1).sort(1)[0].to(device)
-        loss = get_loss(model, x[batch_indices,:,:], t, time_info[batch_indices,:,:])
-        loss.backward()
-        optim.step()
-        ema.step_ema(ema_model, model)
-
-        tqdm_epoch.set_description('Average Loss: {:5f}'.format(loss.item()))
+            progress.update(task, advance=1, description=f"[cyan]Training diffusion model... Loss: {loss.item():.5f}")
     
     return model
 
@@ -221,9 +223,3 @@ def sample(t,emb,model,time_info):
         
         x = (1/(1 - beta).sqrt()) * (x - beta * pred_noise / (1 - alpha).sqrt()) + beta.sqrt() * z
     return x
-
-
-
-
-
-

@@ -176,8 +176,8 @@ def get_loss(model, x, t, label, time_info = None):
 
 #####################################################################################################################
 import copy
-import tqdm.notebook
 import random
+from rich.progress import Progress
 
 def train_diffusion(latent_features, time_info, hidden_dim, num_layers, diffusion_steps, n_epochs, num_classes = None):
     input_size = latent_features.shape[2]
@@ -193,26 +193,28 @@ def train_diffusion(latent_features, time_info, hidden_dim, num_layers, diffusio
 
     batch_size = diffusion_steps
 
-    tqdm_epoch = tqdm.notebook.trange(n_epochs)
     all_indices = list(range(len(latent_features)))
     
-    for epoch in tqdm_epoch:
-        batch_indices = random.sample(all_indices, batch_size)
-        optim.zero_grad()
-        t = torch.rand(diffusion_steps, T, 1).sort(1)[0].to(device)
+    with Progress() as progress:
+        task = progress.add_task("[cyan]Training conditional diffusion model...", total=n_epochs)
         
-        label = torch.tensor(batch_indices)
-        label = torch.repeat_interleave(label, T, dim=0).reshape(batch_size,T).to(device)
+        for epoch in range(n_epochs):
+            batch_indices = random.sample(all_indices, batch_size)
+            optim.zero_grad()
+            t = torch.rand(diffusion_steps, T, 1).sort(1)[0].to(device)
+            
+            label = torch.tensor(batch_indices)
+            label = torch.repeat_interleave(label, T, dim=0).reshape(batch_size,T).to(device)
 
-        if np.random.random() < 0.1:
-            label = None
-        
-        loss = get_loss(model, x[batch_indices,:,:], t, label, time_info[batch_indices,:,:])
-        loss.backward()
-        optim.step()
-        ema.step_ema(ema_model, model)
+            if np.random.random() < 0.1:
+                label = None
+            
+            loss = get_loss(model, x[batch_indices,:,:], t, label, time_info[batch_indices,:,:])
+            loss.backward()
+            optim.step()
+            ema.step_ema(ema_model, model)
 
-        tqdm_epoch.set_description('Average Loss: {:5f}'.format(loss.item()))
+            progress.update(task, advance=1, description=f"[cyan]Training conditional diffusion model... Loss: {loss.item():.5f}")
     
     return model
 
