@@ -36,7 +36,7 @@ def load_dataset(dataset_path, is_multi_sequence=False, column_to_partition=None
     else:
         # Process single-sequence data
         processed_data = dp.splitData(real_df1, 24, threshold)
-        time_info = dp.splitTimeData(real_df2, processed_data.shape[1])
+        time_info = dp.splitTimeData(real_df2, processed_data.shape[1]).to(device)
 
         # Convert to float32 and move to device
         # processed_data = processed_data.float().to(device)
@@ -101,8 +101,8 @@ def train_diffusion(latent_features, time_info, config, is_multi_sequence=False)
         # Use conditional diffusion for multi-sequence data
         num_classes = len(latent_features)
         diff_model = ctdf.train_diffusion(
-            latent_features=latent_features,
-            time_info=time_info,
+            latent_features,
+            time_info.to(config["device"]),
             hidden_dim=config["hidden_size"],
             num_layers=config["num_layers"],
             diffusion_steps=config["n_steps"],
@@ -111,10 +111,10 @@ def train_diffusion(latent_features, time_info, config, is_multi_sequence=False)
         )
     else:
         # Use standard diffusion for single-sequence data
-        time = time_info.to(config["device"])
+        # time = time_info.to(config["device"])
         diff_model = tdf.train_diffusion(
             latent_features=latent_features,
-            time_info=time,
+            time_info=time_info,
             hidden_dim=config["hidden_size"],
             num_layers=config["num_layers"],
             diffusion_steps=config["n_steps"],
