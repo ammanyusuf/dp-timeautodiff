@@ -12,3 +12,4 @@ jupyter
 ipykernel
 scipy
 PyYAML
+dython

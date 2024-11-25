@@ -11,8 +11,8 @@ import process_edited as pce
 import random
 import matplotlib.pyplot as plt
 # from Evaluation_Metrics import mt, pdm, correl
-import Evaluation_Metrics.Metrics as mt
-import Evaluation_Metrics.predictive_metrics as pdm
+from Evaluation_Metrics import Metrics as mt
+from Evaluation_Metrics import predictive_metrics as pdm
 from Evaluation_Metrics import correl
 
 
