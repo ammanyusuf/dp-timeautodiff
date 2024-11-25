@@ -10,6 +10,7 @@ import DP as dp
 import process_edited as pce
 import random
 import matplotlib.pyplot as plt
+import gc
 # from Evaluation_Metrics import mt, pdm, correl
 from Evaluation_Metrics import Metrics as mt
 from Evaluation_Metrics import predictive_metrics as pdm
@@ -381,181 +382,218 @@ def run_dp_experiments(real_df, processed_data, time_info, ae_config, epsilons=[
     return results, tradeoff_results
 
 
+def clear_gpu_memory():
+    """Clear GPU memory between runs"""
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        gc.collect()
+
+
 def run_original_experiment(args):
     """Original experiment implementation moved from main()"""
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    try:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        # Clear GPU memory at start
+        clear_gpu_memory()
 
-    # Autoencoder configuration
-    ae_config = {
-        "channels": 64,
-        "hidden_size": 200,
-        "num_layers": 1,
-        "lr": 2e-4,
-        "weight_decay": 1e-6,
-        "n_epochs": 20000,
-        "batch_size": 50,
-        "threshold": 1,
-        "min_beta": 1e-5,
-        "max_beta": 0.1,
-        "emb_dim": 128,
-        "time_dim": 8,
-        "lat_dim": 7,
-        "device": device,
-    }
+        # Autoencoder configuration
+        ae_config = {
+            "channels": 64,
+            "hidden_size": 200,
+            "num_layers": 1,
+            "lr": 2e-4,
+            "weight_decay": 1e-6,
+            "n_epochs": 20000,
+            "batch_size": 50,
+            "threshold": 1,
+            "min_beta": 1e-5,
+            "max_beta": 0.1,
+            "emb_dim": 128,
+            "time_dim": 8,
+            "lat_dim": 7,
+            "device": device,
+        }
 
-    # Diffusion configuration
-    diff_config = {
-        "hidden_size": 250,
-        "num_layers": 2,
-        "n_epochs": 20000,
-        "n_steps": 100,
-        "device": device,
-    }
+        # Diffusion configuration
+        diff_config = {
+            "hidden_size": 250,
+            "num_layers": 2,
+            "n_epochs": 20000,
+            "n_steps": 100,
+            "device": device,
+        }
 
-    # Load dataset
-    real_df, real_df1, processed_data, time_info = load_dataset(
-        args.dataset,
-        is_multi_sequence=args.multi_sequence,
-        column_to_partition=args.column_to_partition,
-    )
-
-    # Train autoencoder
-    print("Training/loading autoencoder...")
-
-    ae_results = train_ae(
-        real_df1,
-        processed_data,
-        time_info,
-        ae_config,
-        column_to_partition=args.column_to_partition,
-        save_path=args.save_path,
-        load_path=args.pretrained_path,
-    )
-
-    # Train diffusion model
-    print("Training diffusion model...")
-    ae_model, latent_features = ae_results[0], ae_results[1]
-    diff_model = train_diffusion(
-        latent_features, time_info, diff_config, is_multi_sequence=args.multi_sequence
-    )
-
-    # Generate samples
-    print("Generating samples...")
-    if args.multi_sequence and args.label is not None:
-        # For conditional generation
-        label = [args.label]
-        latent_features = latent_features[label, :, :]
-        time_info = time_info[label, :, :]
-
-    synth_data, latent_samples = generate_samples(
-        real_df1,
-        processed_data,
-        ae_model,
-        latent_features,
-        time_info,
-        diff_model,
-        ae_config,
-        diff_config,
-        is_multi_sequence=args.multi_sequence,
-        label=args.label if args.multi_sequence else None,
-    )
-
-    # Save results
-    output_dir = os.path.join(args.output_dir, "non_dp")
-    os.makedirs(output_dir, exist_ok=True)
-    dataset_name = os.path.splitext(os.path.basename(args.dataset))[0]
-    torch.save(synth_data, os.path.join(output_dir, f"{dataset_name}_synth.pt"))
-    torch.save(processed_data, os.path.join(output_dir, f"{dataset_name}_real.pt"))
-    torch.save(latent_samples, os.path.join(output_dir, f"{dataset_name}_latent.pt"))
-
-    # Plot results
-    if args.multi_sequence:
-        if args.label is not None:
-            plot_multi_sequence_results(
-                real_df1, 
-                synth_data, 
-                processed_data, 
-                ae_config["threshold"],
-                args.label,
-                output_dir
-            )
-    else:
-        plot_single_sequence_results(
-            real_df1,
-            synth_data,
-            processed_data,
-            ae_config["threshold"],
-            output_dir
+        # Load dataset
+        real_df, real_df1, processed_data, time_info = load_dataset(
+            args.dataset,
+            is_multi_sequence=args.multi_sequence,
+            column_to_partition=args.column_to_partition,
         )
 
-    print(f"Generated samples saved to {output_dir}")
-    return synth_data, processed_data, latent_samples
+        # Train autoencoder
+        print("Training/loading autoencoder...")
+
+        ae_results = train_ae(
+            real_df1,
+            processed_data,
+            time_info,
+            ae_config,
+            column_to_partition=args.column_to_partition,
+            save_path=args.save_path,
+            load_path=args.pretrained_path,
+        )
+
+        # Train diffusion model
+        print("Training diffusion model...")
+        ae_model, latent_features = ae_results[0], ae_results[1]
+        diff_model = train_diffusion(
+            latent_features, time_info, diff_config, is_multi_sequence=args.multi_sequence
+        )
+
+        # Generate samples
+        print("Generating samples...")
+        if args.multi_sequence and args.label is not None:
+            # For conditional generation
+            label = [args.label]
+            latent_features = latent_features[label, :, :]
+            time_info = time_info[label, :, :]
+
+        synth_data, latent_samples = generate_samples(
+            real_df1,
+            processed_data,
+            ae_model,
+            latent_features,
+            time_info,
+            diff_model,
+            ae_config,
+            diff_config,
+            is_multi_sequence=args.multi_sequence,
+            label=args.label if args.multi_sequence else None,
+        )
+
+        # Save results
+        output_dir = os.path.join(args.output_dir, "non_dp")
+        os.makedirs(output_dir, exist_ok=True)
+        dataset_name = os.path.splitext(os.path.basename(args.dataset))[0]
+        torch.save(synth_data, os.path.join(output_dir, f"{dataset_name}_synth.pt"))
+        torch.save(processed_data, os.path.join(output_dir, f"{dataset_name}_real.pt"))
+        torch.save(latent_samples, os.path.join(output_dir, f"{dataset_name}_latent.pt"))
+
+        # Plot results
+        if args.multi_sequence:
+            if args.label is not None:
+                plot_multi_sequence_results(
+                    real_df1, 
+                    synth_data, 
+                    processed_data, 
+                    ae_config["threshold"],
+                    args.label,
+                    output_dir
+                )
+        else:
+            plot_single_sequence_results(
+                real_df1,
+                synth_data,
+                processed_data,
+                ae_config["threshold"],
+                output_dir
+            )
+
+        print(f"Generated samples saved to {output_dir}")
+        
+        # After training is complete, clear memory
+        if device == "cuda":
+            del ae_model
+            del diff_model
+            clear_gpu_memory()
+
+        return synth_data, processed_data, latent_samples
+
+    except Exception as e:
+        print(f"Error in experiment: {str(e)}")
+        clear_gpu_memory()
+        raise e
 
 
 def run_dp_experiment(args):
     """Run experiment with differential privacy"""
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    # Autoencoder configuration
-    ae_config = {
-        "channels": 64,
-        "hidden_size": 200,
-        "num_layers": 1,
-        "lr": 2e-4,
-        "weight_decay": 1e-6,
-        "n_epochs": 20000,
-        "batch_size": 50,
-        "threshold": 1,
-        "min_beta": 1e-5,
-        "max_beta": 0.1,
-        "emb_dim": 128,
-        "time_dim": 8,
-        "lat_dim": 7,
-        "device": device,
-    }
-
-    # Load dataset
-    real_df, real_df1, processed_data, time_info = load_dataset(
-        args.dataset,
-        is_multi_sequence=args.multi_sequence,
-        column_to_partition=args.column_to_partition,
-    )
-
-    # Run DP experiments with different epsilon values
-    results, tradeoff_results = run_dp_experiments(
-        real_df1, 
-        processed_data, 
-        time_info, 
-        ae_config,
-        epsilons=[0.1, 0.5, 1.0, 2.0, 5.0]
-    )
-
-    # Save results for each epsilon
-    output_dir = os.path.join(args.output_dir, "dp")
-    os.makedirs(output_dir, exist_ok=True)
-    dataset_name = os.path.splitext(os.path.basename(args.dataset))[0]
-
-    for epsilon, result in results.items():
-        epsilon_dir = os.path.join(output_dir, f"epsilon_{epsilon}")
-        os.makedirs(epsilon_dir, exist_ok=True)
+    try:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         
-        torch.save(result['synthetic_data'], os.path.join(epsilon_dir, f"{dataset_name}_synth.pt"))
-        torch.save(result['latent_features'], os.path.join(epsilon_dir, f"{dataset_name}_latent.pt"))
-        
-        # Save metrics
-        metrics = {
-            'utility_metrics': result['utility_metrics'],
-            'target_epsilon': result['target_epsilon'],
-            'actual_epsilon': result['actual_epsilon']
+        # Clear GPU memory at start
+        clear_gpu_memory()
+
+        # Autoencoder configuration
+        ae_config = {
+            "channels": 64,
+            "hidden_size": 200,
+            "num_layers": 1,
+            "lr": 2e-4,
+            "weight_decay": 1e-6,
+            "n_epochs": 20000,
+            "batch_size": 50,
+            "threshold": 1,
+            "min_beta": 1e-5,
+            "max_beta": 0.1,
+            "emb_dim": 128,
+            "time_dim": 8,
+            "lat_dim": 7,
+            "device": device,
         }
-        torch.save(metrics, os.path.join(epsilon_dir, f"{dataset_name}_metrics.pt"))
-    
-    # Save tradeoff results
-    torch.save(tradeoff_results, os.path.join(output_dir, f"{dataset_name}_tradeoff.pt"))
-    torch.save(processed_data, os.path.join(output_dir, f"{dataset_name}_real.pt"))
 
-    print(f"Generated samples and metrics saved to {output_dir}")
-    return results, tradeoff_results
+        # Load dataset
+        real_df, real_df1, processed_data, time_info = load_dataset(
+            args.dataset,
+            is_multi_sequence=args.multi_sequence,
+            column_to_partition=args.column_to_partition,
+        )
+
+        # Run DP experiments with different epsilon values
+        results, tradeoff_results = run_dp_experiments(
+            real_df1, 
+            processed_data, 
+            time_info, 
+            ae_config,
+            epsilons=[0.1, 0.5, 1.0, 2.0, 5.0]
+        )
+
+        # Save results for each epsilon
+        output_dir = os.path.join(args.output_dir, "dp")
+        os.makedirs(output_dir, exist_ok=True)
+        dataset_name = os.path.splitext(os.path.basename(args.dataset))[0]
+
+        for epsilon, result in results.items():
+            epsilon_dir = os.path.join(output_dir, f"epsilon_{epsilon}")
+            os.makedirs(epsilon_dir, exist_ok=True)
+            
+            torch.save(result['synthetic_data'], os.path.join(epsilon_dir, f"{dataset_name}_synth.pt"))
+            torch.save(result['latent_features'], os.path.join(epsilon_dir, f"{dataset_name}_latent.pt"))
+            
+            # Save metrics
+            metrics = {
+                'utility_metrics': result['utility_metrics'],
+                'target_epsilon': result['target_epsilon'],
+                'actual_epsilon': result['actual_epsilon']
+            }
+            torch.save(metrics, os.path.join(epsilon_dir, f"{dataset_name}_metrics.pt"))
+        
+        # Save tradeoff results
+        torch.save(tradeoff_results, os.path.join(output_dir, f"{dataset_name}_tradeoff.pt"))
+        torch.save(processed_data, os.path.join(output_dir, f"{dataset_name}_real.pt"))
+
+        print(f"Generated samples and metrics saved to {output_dir}")
+        
+        # After all experiments, clear memory
+        if device == "cuda":
+            clear_gpu_memory()
+
+        return results, tradeoff_results
+
+    except Exception as e:
+        print(f"Error in DP experiment: {str(e)}")
+        clear_gpu_memory()
+        raise e
 
 
 def plot_single_sequence_results(real_df, synth_data, real_data, threshold, output_dir):
@@ -683,10 +721,14 @@ def main():
 
     args = parser.parse_args()
 
-    if args.use_dp:
-        results, tradeoff_results = run_dp_experiment(args)
-    else:
-        synth_data, processed_data, latent_samples = run_original_experiment(args)
+    try:
+        if args.use_dp:
+            results, tradeoff_results = run_dp_experiment(args)
+        else:
+            synth_data, processed_data, latent_samples = run_original_experiment(args)
+    finally:
+        # Always clear GPU memory at the end
+        clear_gpu_memory()
 
 if __name__ == "__main__":
     main()
