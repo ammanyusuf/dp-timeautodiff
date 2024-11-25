@@ -14,6 +14,9 @@ from torch.optim import Adam
 import DP as dp
 import math
 from rich.progress import Progress
+import torch.nn.utils.clip_grad as clip_grad
+from opacus import PrivacyEngine
+from opacus.validators import ModuleValidator
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -448,3 +451,163 @@ def train_autoencoder(
         print(f"Saved model to {save_path}")
 
     return (ae, latent_features.detach(), output, losses, recons_loss, mu_z, logvar_z)
+
+
+def train_dp_autoencoder(
+    real_df,
+    processed_data,
+    channels,
+    hidden_size,
+    num_layers,
+    lr,
+    weight_decay,
+    n_epochs,
+    batch_size,
+    threshold,
+    min_beta,
+    max_beta,
+    emb_dim,
+    time_dim,
+    lat_dim,
+    device,
+    epsilon,  # Privacy budget
+    delta=1e-5,    # Privacy delta
+    max_grad_norm=1.0,  # Maximum gradient norm for clipping
+    save_path=None,
+    load_path=None,
+):
+    """Train autoencoder with differential privacy using Opacus.
+    
+    Similar to train_autoencoder but with DP guarantees.
+    """
+    parser = pce.DataFrameParser().fit(real_df, threshold)
+    data = parser.transform()
+    data = torch.tensor(data.astype("float32")).unsqueeze(0)
+
+    datatype_info = parser.datatype_info()
+    n_bins = datatype_info["n_bins"]
+    n_cats = datatype_info["n_cats"]
+    n_nums = datatype_info["n_nums"]
+    cards = datatype_info["cards"]
+
+    N, seq_len, input_size = processed_data.shape
+    ae = DeapStack(
+        channels,
+        batch_size,
+        seq_len,
+        n_bins,
+        n_cats,
+        n_nums,
+        cards,
+        input_size,
+        hidden_size,
+        num_layers,
+        emb_dim,
+        time_dim,
+        lat_dim,
+    ).to(device)
+
+    # Make autoencoder DP-compatible
+    ae = ModuleValidator.fix(ae)
+    if not ModuleValidator.is_valid(ae):
+        raise ValueError("Autoencoder model is not compatible with DP training")
+
+    optimizer_ae = Adam(ae.parameters(), lr=lr, weight_decay=weight_decay)
+
+    # Initialize privacy engine
+    privacy_engine = PrivacyEngine()
+    
+    # Create data loader
+    train_loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(processed_data),
+        batch_size=batch_size,
+        shuffle=True
+    )
+    
+    # Make the model private
+    ae, optimizer_ae, train_loader = privacy_engine.make_private_with_epsilon(
+        module=ae,
+        optimizer=optimizer_ae,
+        data_loader=train_loader,
+        epochs=n_epochs,
+        target_epsilon=epsilon,
+        target_delta=delta,
+        max_grad_norm=max_grad_norm,
+    )
+
+    start_epoch = 0
+    best_loss = float("inf")
+
+    # Load pretrained model if specified
+    if load_path is not None:
+        start_epoch, best_loss = load_autoencoder(ae, optimizer_ae, load_path, device)
+        print(f"Loaded pretrained model from epoch {start_epoch} with loss {best_loss}")
+
+    inputs = processed_data.to(device)
+
+    losses = []
+    recons_loss = []
+    KL_loss = []
+    beta = max_beta
+
+    lambd = 0.7
+    best_train_loss = float("inf")
+    all_indices = list(range(N))
+
+    with Progress() as progress:
+        training_task = progress.add_task("[red]Training...", total=n_epochs)
+
+        for epoch in range(n_epochs):
+            ######################### Train Auto-Encoder #########################
+            batch_indices = random.sample(all_indices, batch_size)
+
+            optimizer_ae.zero_grad()
+            outputs, _, mu_z, logvar_z = ae(inputs[batch_indices, :, :])
+
+            disc_loss, num_loss = auto_loss(
+                inputs[batch_indices, :, :],
+                outputs,
+                n_bins,
+                n_nums,
+                n_cats,
+                beta,
+                cards,
+            )
+            temp = 1 + logvar_z - mu_z.pow(2) - logvar_z.exp()
+            loss_kld = -0.5 * torch.mean(temp.mean(-1).mean())
+
+            loss_Auto = num_loss + disc_loss + beta * loss_kld
+            loss_Auto.backward()
+            
+            optimizer_ae.step()
+            
+            # Get privacy spent
+            epsilon = privacy_engine.get_epsilon(delta)
+            
+            progress.update(
+                training_task,
+                advance=1,
+                description=f"Epoch {epoch}/{n_epochs} - Loss: {loss_Auto.item():.4f} - ε: {epsilon:.2f}",
+            )
+
+            if loss_Auto < best_train_loss:
+                best_train_loss = loss_Auto
+                patience = 0
+            else:
+                patience += 1
+                if patience == 10:
+                    if beta > min_beta:
+                        beta = beta * lambd
+
+            losses.append(loss_Auto.item())
+            recons_loss.append(num_loss.item() + disc_loss.item())
+            KL_loss.append(loss_kld.item())
+
+    output, latent_features, _, _ = ae(processed_data)
+
+    # Save model if specified
+    if save_path is not None:
+        save_autoencoder(ae, optimizer_ae, epoch, loss_Auto, save_path)
+        print(f"Saved model to {save_path}")
+
+    return (ae, latent_features.detach(), output, losses, recons_loss, mu_z, logvar_z, epsilon)
