@@ -25,48 +25,37 @@ run_dp_experiment() {
 echo "Running single-sequence DP experiments..."
 
 # AirQuality
-for eps in 0.1 0.5 1.0 2.0 5.0; do
-    echo "Running AirQuality with epsilon = $eps"
-    run_dp_experiment \
-        --dataset "Dataset/Single-Sequence/AirQuality.csv" \
-        --save_path "experiments/single_sequence/dp_${eps}/airquality_model.pt" \
-        --output_dir "experiments/single_sequence/dp_${eps}/airquality_samples" \
-        --use_dp \
-        --epsilon $eps
-done
+
+echo "Running AirQuality"
+run_dp_experiment \
+    --dataset "Dataset/Single-Sequence/AirQuality.csv" \
+    --save_path "experiments/single_sequence/dp/airquality_model.pt" \
+    --output_dir "experiments/single_sequence/dp/airquality_samples" \
+    --use_dp 
 
 # Hurricane
-for eps in 0.1 0.5 1.0 2.0 5.0; do
-    echo "Running Hurricane with epsilon = $eps"
-    run_dp_experiment \
-        --dataset "Dataset/Single-Sequence/Hurricane.csv" \
-        --save_path "experiments/single_sequence/dp_${eps}/hurricane_model.pt" \
-        --output_dir "experiments/single_sequence/dp_${eps}/hurricane_samples" \
-        --use_dp \
-        --epsilon $eps
-done
+echo "Running Hurricane"
+run_dp_experiment \
+    --dataset "Dataset/Single-Sequence/Hurricane.csv" \
+    --save_path "experiments/single_sequence/dp/hurricane_model.pt" \
+    --output_dir "experiments/single_sequence/dp/hurricane_samples" \
+    --use_dp
 
 # Metro Traffic
-for eps in 0.1 0.5 1.0 2.0 5.0; do
-    echo "Running Metro Traffic with epsilon = $eps"
-    run_dp_experiment \
-        --dataset "Dataset/Single-Sequence/Metro_Traffic.csv" \
-        --save_path "experiments/single_sequence/dp_${eps}/metro_traffic_model.pt" \
-        --output_dir "experiments/single_sequence/dp_${eps}/metro_traffic_samples" \
-        --use_dp \
-        --epsilon $eps
-done
+echo "Running Metro Traffic"
+run_dp_experiment \
+    --dataset "Dataset/Single-Sequence/Metro_Traffic.csv" \
+    --save_path "experiments/single_sequence/dp/metro_traffic_model.pt" \
+    --output_dir "experiments/single_sequence/dp/metro_traffic_samples" \
+    --use_dp
 
 # Pollution Data
-for eps in 0.1 0.5 1.0 2.0 5.0; do
-    echo "Running Pollution Data with epsilon = $eps"
-    run_dp_experiment \
-        --dataset "Dataset/Single-Sequence/Pollution Data.csv" \
-        --save_path "experiments/single_sequence/dp_${eps}/pollution_model.pt" \
-        --output_dir "experiments/single_sequence/dp_${eps}/pollution_samples" \
-        --use_dp \
-        --epsilon $eps
-done
+echo "Running Pollution Data"
+run_dp_experiment \
+    --dataset "Dataset/Single-Sequence/Pollution Data.csv" \
+    --save_path "experiments/single_sequence/dp/pollution_model.pt" \
+    --output_dir "experiments/single_sequence/dp/pollution_samples" \
+    --use_dp
 
 echo "Single-sequence DP experiments completed."
 
@@ -74,30 +63,24 @@ echo "Single-sequence DP experiments completed."
 echo "Running multi-sequence DP experiments..."
 
 # Card Fraud
-for eps in 0.1 0.5 1.0 2.0 5.0; do
-    echo "Running Card Fraud with epsilon = $eps"
-    run_dp_experiment \
-        --dataset "Dataset/Multi-Sequence Data/card_fraud.csv" \
-        --multi_sequence \
-        --column_to_partition "User" \
-        --save_path "experiments/multi_sequence/dp_${eps}/card_fraud_model.pt" \
-        --output_dir "experiments/multi_sequence/dp_${eps}/card_fraud_samples" \
-        --use_dp \
-        --epsilon $eps
-done
+echo "Running Card Fraud"
+run_dp_experiment \
+    --dataset "Dataset/Multi-Sequence Data/card_fraud.csv" \
+    --multi_sequence \
+    --column_to_partition "User" \
+    --save_path "experiments/multi_sequence/dp/card_fraud_model.pt" \
+    --output_dir "experiments/multi_sequence/dp/card_fraud_samples" \
+    --use_dp \
 
 # NASDAQ100
-for eps in 0.1 0.5 1.0 2.0 5.0; do
-    echo "Running NASDAQ100 with epsilon = $eps"
-    run_dp_experiment \
-        --dataset "Dataset/Multi-Sequence Data/nasdaq100_2019.csv" \
-        --multi_sequence \
-        --column_to_partition "Symbol" \
-        --save_path "experiments/multi_sequence/dp_${eps}/nasdaq_model.pt" \
-        --output_dir "experiments/multi_sequence/dp_${eps}/nasdaq_samples" \
-        --use_dp \
-        --epsilon $eps
-done
+echo "Running NASDAQ100"
+run_dp_experiment \
+    --dataset "Dataset/Multi-Sequence Data/nasdaq100_2019.csv" \
+    --multi_sequence \
+    --column_to_partition "Symbol" \
+    --save_path "experiments/multi_sequence/dp/nasdaq_model.pt" \
+    --output_dir "experiments/multi_sequence/dp/nasdaq_samples" \
+    --use_dp \
 
 echo "Multi-sequence DP experiments completed."
 echo "All DP experiments completed successfully!"
