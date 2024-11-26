@@ -17,6 +17,9 @@ from rich.progress import Progress
 import torch.nn.utils.clip_grad as clip_grad
 from opacus import PrivacyEngine
 from opacus.validators import ModuleValidator
+from opacus.accountants.utils import get_noise_multiplier
+from opacus.utils.batch_memory_manager import BatchMemoryManager
+import queue
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -45,6 +48,50 @@ def compute_sine_cosine(v, num_terms):
     result = torch.cat((sine_values, cosine_values), dim=-1)
 
     return result
+
+
+class CustomGRU(nn.Module):
+    def __init__(self, input_size, hidden_size, num_layers, batch_first=True):
+        super().__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.batch_first = batch_first
+        
+        self.input_layer = nn.Linear(input_size, hidden_size)
+        
+        self.update_gate = nn.Linear(hidden_size + hidden_size, hidden_size)
+        self.reset_gate = nn.Linear(hidden_size + hidden_size, hidden_size)
+        self.new_gate = nn.Linear(hidden_size + hidden_size, hidden_size)
+        
+    def forward(self, x, h=None):
+        if self.batch_first:
+            batch_size, seq_len, _ = x.size()
+        else:
+            seq_len, batch_size, _ = x.size()
+            x = x.transpose(0, 1)
+            
+        if h is None:
+            h = torch.zeros(batch_size, self.hidden_size, device=x.device)
+            
+        x = self.input_layer(x)  # [batch_size, seq_len, hidden_size]
+        
+        output = torch.zeros(batch_size, seq_len, self.hidden_size, device=x.device)
+        h_t = h
+        
+        for t in range(seq_len):
+            x_t = x[:, t]  # [batch_size, hidden_size]
+            
+            combined = torch.cat([x_t, h_t], dim=1)  # [batch_size, 2*hidden_size]
+            z_t = torch.sigmoid(self.update_gate(combined))
+            r_t = torch.sigmoid(self.reset_gate(combined))
+            combined_reset = torch.cat([x_t, r_t * h_t], dim=1)
+            n_t = torch.tanh(self.new_gate(combined_reset))
+            
+            h_t = (1 - z_t) * n_t + z_t * h_t
+            output[:, t] = h_t
+        
+        return output, h_t.unsqueeze(0)
 
 
 ################################################################################################################
@@ -190,12 +237,9 @@ class DeapStack(nn.Module):
             nn.ReLU(),
             nn.Linear(input_size, input_size),
         )
-        # self.encoder_Transformer = Transformer_Block(channels)
 
-        self.encoder_mu = nn.GRU(input_size, hidden_size, num_layers, batch_first=True)
-        self.encoder_logvar = nn.GRU(
-            input_size, hidden_size, num_layers, batch_first=True
-        )
+        self.encoder_mu = CustomGRU(input_size, hidden_size, num_layers, batch_first=True)
+        self.encoder_logvar = CustomGRU(input_size, hidden_size, num_layers, batch_first=True)
 
         self.fc_mu = nn.Linear(hidden_size, lat_dim)
         self.fc_logvar = nn.Linear(hidden_size, lat_dim)
@@ -470,16 +514,12 @@ def train_dp_autoencoder(
     time_dim,
     lat_dim,
     device,
-    epsilon,  # Privacy budget
-    delta=1e-5,    # Privacy delta
-    max_grad_norm=1.0,  # Maximum gradient norm for clipping
+    epsilon,
+    delta=1e-5,
+    max_grad_norm=1.0,
     save_path=None,
     load_path=None,
 ):
-    """Train autoencoder with differential privacy using Opacus.
-    
-    Similar to train_autoencoder but with DP guarantees.
-    """
     parser = pce.DataFrameParser().fit(real_df, threshold)
     data = parser.transform()
     data = torch.tensor(data.astype("float32")).unsqueeze(0)
@@ -507,24 +547,30 @@ def train_dp_autoencoder(
         lat_dim,
     ).to(device)
 
-    # Make autoencoder DP-compatible
     ae = ModuleValidator.fix(ae)
     if not ModuleValidator.is_valid(ae):
         raise ValueError("Autoencoder model is not compatible with DP training")
 
     optimizer_ae = Adam(ae.parameters(), lr=lr, weight_decay=weight_decay)
 
-    # Initialize privacy engine
+    if load_path is not None:
+        start_epoch, best_loss = load_autoencoder(ae, optimizer_ae, load_path, device)
+        print(f"Loaded pretrained model from epoch {start_epoch} with loss {best_loss}")
+
+    # Create dataset with proper DP sampling
+    train_dataset = torch.utils.data.TensorDataset(processed_data)
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        drop_last=True,
+        generator=None
+    )
+
+    # Initialize privacy engine with computed noise multiplier
     privacy_engine = PrivacyEngine()
     
-    # Create data loader
-    train_loader = torch.utils.data.DataLoader(
-        torch.utils.data.TensorDataset(processed_data),
-        batch_size=batch_size,
-        shuffle=True
-    )
-    
-    # Make the model private
+    # Make model private using epsilon-based privacy
     ae, optimizer_ae, train_loader = privacy_engine.make_private_with_epsilon(
         module=ae,
         optimizer=optimizer_ae,
@@ -535,55 +581,57 @@ def train_dp_autoencoder(
         max_grad_norm=max_grad_norm,
     )
 
-    start_epoch = 0
     best_loss = float("inf")
 
-    # Load pretrained model if specified
-    if load_path is not None:
-        start_epoch, best_loss = load_autoencoder(ae, optimizer_ae, load_path, device)
-        print(f"Loaded pretrained model from epoch {start_epoch} with loss {best_loss}")
-
-    inputs = processed_data.to(device)
+    # inputs = processed_data.to(device)
 
     losses = []
     recons_loss = []
     KL_loss = []
     beta = max_beta
 
-    lambd = 0.7
-    best_train_loss = float("inf")
-    all_indices = list(range(N))
+    # lambd = 0.7
+    # best_train_loss = float("inf")
+    # all_indices = list(range(N))
 
     with Progress() as progress:
-        training_task = progress.add_task("[red]Training...", total=n_epochs)
-
+        training_task = progress.add_task("Training...", total=n_epochs)
         for epoch in range(n_epochs):
-            ######################### Train Auto-Encoder #########################
-            batch_indices = random.sample(all_indices, batch_size)
-
-            optimizer_ae.zero_grad()
-            outputs, _, mu_z, logvar_z = ae(inputs[batch_indices, :, :])
-
-            disc_loss, num_loss = auto_loss(
-                inputs[batch_indices, :, :],
-                outputs,
-                n_bins,
-                n_nums,
-                n_cats,
-                beta,
-                cards,
-            )
-            temp = 1 + logvar_z - mu_z.pow(2) - logvar_z.exp()
-            loss_kld = -0.5 * torch.mean(temp.mean(-1).mean())
-
-            loss_Auto = num_loss + disc_loss + beta * loss_kld
-            loss_Auto.backward()
+            ae.train()
+            epoch_loss = 0.0
+            num_batches = 0
             
-            optimizer_ae.step()
-            
-            # Get privacy spent
+            with BatchMemoryManager(
+                data_loader=train_loader,
+                max_physical_batch_size=128,
+                optimizer=optimizer_ae
+            ) as memory_safe_data_loader:
+                for batch_data in memory_safe_data_loader:
+                    optimizer_ae.zero_grad()
+                    batch_input = batch_data[0].to(device)
+                    
+                    outputs, _, mu_z, logvar_z = ae(batch_input)
+
+                    disc_loss, num_loss = auto_loss(
+                        batch_input,
+                        outputs,
+                        n_bins,
+                        n_nums,
+                        n_cats,
+                        beta,
+                        cards,
+                    )
+                    temp = 1 + logvar_z - mu_z.pow(2) - logvar_z.exp()
+                    loss_kld = -0.5 * torch.mean(temp.mean(-1).mean())
+
+                    loss_Auto = num_loss + disc_loss + beta * loss_kld
+                    loss_Auto.backward()
+                    
+                    optimizer_ae.step()
+
+
             epsilon = privacy_engine.get_epsilon(delta)
-            
+
             progress.update(
                 training_task,
                 advance=1,

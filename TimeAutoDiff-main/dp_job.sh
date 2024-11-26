@@ -3,22 +3,22 @@
 # Define arrays for datasets and epsilon values
 declare -a SINGLE_SEQUENCE_DATASETS=(
     "AirQuality"
-    "Hurricane"
-    "Metro_Traffic"
-    "Pollution Data"
+    # "Hurricane"
+    # "Metro_Traffic"
+    # "Pollution Data"
 )
 
-declare -a MULTI_SEQUENCE_DATASETS=(
-    "card_fraud:User"
-    "nasdaq100_2019:Symbol"
-)
+# declare -a MULTI_SEQUENCE_DATASETS=(
+#     "card_fraud:User"
+#     "nasdaq100_2019:Symbol"
+# )
 
 declare -a EPSILON_VALUES=(
     "0.1"
-    "0.5"
-    "1.0"
-    "2.0"
-    "5.0"
+    # "0.5"
+    # "1.0"
+    # "2.0"
+    # "5.0"
 )
 
 # Create output directories
