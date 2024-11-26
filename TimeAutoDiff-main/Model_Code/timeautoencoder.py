@@ -20,6 +20,8 @@ from opacus.validators import ModuleValidator
 from opacus.accountants.utils import get_noise_multiplier
 from opacus.utils.batch_memory_manager import BatchMemoryManager
 import queue
+from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn
+
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -237,6 +239,107 @@ class DeapStack(nn.Module):
             nn.ReLU(),
             nn.Linear(input_size, input_size),
         )
+
+        self.encoder_mu = nn.GRU(input_size, hidden_size, num_layers, batch_first=True)
+        self.encoder_logvar = nn.GRU(input_size, hidden_size, num_layers, batch_first=True)
+
+        self.fc_mu = nn.Linear(hidden_size, lat_dim)
+        self.fc_logvar = nn.Linear(hidden_size, lat_dim)
+
+        # self.cont_normed = nn.LayerNorm((seq_len, n_nums))
+        # self.decoder_Transformer = Transformer_Block(channels)
+        # self.decoder_rnn = nn.GRU(hidden_size, hidden_size, num_layers, batch_first=True)
+
+        self.decoder_mlp = nn.Sequential(
+            nn.Linear(lat_dim, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
+        )
+
+        self.channels = channels
+        self.n_bins = n_bins
+        self.n_cats = n_cats
+        self.n_nums = n_nums
+        self.disc = self.n_bins + self.n_cats
+        self.sigmoid = torch.nn.Sigmoid()
+
+        self.bins_linear = nn.Linear(hidden_size, n_bins) if n_bins else None
+        self.cats_linears = (
+            nn.ModuleList([nn.Linear(hidden_size, card) for card in cards])
+            if n_cats
+            else None
+        )
+        self.nums_linear = nn.Linear(hidden_size, n_nums) if n_nums else None
+
+    def reparametrize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def encoder(self, x):
+        x = self.Emb(x)
+        # x = self.encoder_Transformer(x)
+        # x = x + self.time_encode(time_info)
+
+        mu_z, _ = self.encoder_mu(x)
+        logvar_z, _ = self.encoder_logvar(x)
+
+        mu_z = self.fc_mu(mu_z)
+        logvar_z = self.fc_logvar(logvar_z)
+        emb = self.reparametrize(mu_z, logvar_z)
+
+        return emb, mu_z, logvar_z
+
+    def decoder(self, latent_feature):
+        decoded_outputs = dict()
+        latent_feature = self.decoder_mlp(latent_feature)
+
+        B, L, K = latent_feature.shape
+
+        if self.bins_linear:
+            decoded_outputs["bins"] = self.bins_linear(latent_feature)
+
+        if self.cats_linears:
+            decoded_outputs["cats"] = [
+                linear(latent_feature) for linear in self.cats_linears
+            ]
+
+        if self.nums_linear:
+            decoded_outputs["nums"] = self.sigmoid(self.nums_linear(latent_feature))
+
+        return decoded_outputs
+
+    def forward(self, x):
+        emb, mu_z, logvar_z = self.encoder(x)
+        outputs = self.decoder(emb)
+        return outputs, emb, mu_z, logvar_z
+
+class DeapStack_DP(nn.Module):
+    def __init__(
+        self,
+        channels,
+        batch_size,
+        seq_len,
+        n_bins,
+        n_cats,
+        n_nums,
+        cards,
+        input_size,
+        hidden_size,
+        num_layers,
+        cat_emb_dim,
+        time_dim,
+        lat_dim,
+    ):
+        super().__init__()
+        self.Emb = Embedding_data(
+            input_size, cat_emb_dim, n_bins, n_cats, n_nums, cards
+        )
+        # self.time_encode = nn.Sequential(
+        #     nn.Linear(time_dim, input_size),
+        #     nn.ReLU(),
+        #     nn.Linear(input_size, input_size),
+        # )
 
         self.encoder_mu = CustomGRU(input_size, hidden_size, num_layers, batch_first=True)
         self.encoder_logvar = CustomGRU(input_size, hidden_size, num_layers, batch_first=True)
@@ -531,7 +634,7 @@ def train_dp_autoencoder(
     cards = datatype_info["cards"]
 
     N, seq_len, input_size = processed_data.shape
-    ae = DeapStack(
+    ae = DeapStack_DP(
         channels,
         batch_size,
         seq_len,
@@ -549,6 +652,7 @@ def train_dp_autoencoder(
 
     ae = ModuleValidator.fix(ae)
     if not ModuleValidator.is_valid(ae):
+        print(ModuleValidator.validate(ae, strict=False))
         raise ValueError("Autoencoder model is not compatible with DP training")
 
     optimizer_ae = Adam(ae.parameters(), lr=lr, weight_decay=weight_decay)
@@ -557,20 +661,16 @@ def train_dp_autoencoder(
         start_epoch, best_loss = load_autoencoder(ae, optimizer_ae, load_path, device)
         print(f"Loaded pretrained model from epoch {start_epoch} with loss {best_loss}")
 
-    # Create dataset with proper DP sampling
     train_dataset = torch.utils.data.TensorDataset(processed_data)
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        drop_last=True,
-        generator=None
+        drop_last=False,
     )
 
-    # Initialize privacy engine with computed noise multiplier
     privacy_engine = PrivacyEngine()
     
-    # Make model private using epsilon-based privacy
     ae, optimizer_ae, train_loader = privacy_engine.make_private_with_epsilon(
         module=ae,
         optimizer=optimizer_ae,
@@ -591,25 +691,46 @@ def train_dp_autoencoder(
     beta = max_beta
 
     # lambd = 0.7
-    # best_train_loss = float("inf")
+    best_train_loss = float("inf")
     # all_indices = list(range(N))
-
-    with Progress() as progress:
-        training_task = progress.add_task("Training...", total=n_epochs)
+    with Progress(
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(),
+        "[progress.percentage]{task.percentage:>3.0f}%",
+        "•",
+        TimeRemainingColumn(),
+    ) as progress:
+        training_task = progress.add_task("Training Epochs...", total=n_epochs)
+        batch_task = None
         for epoch in range(n_epochs):
             ae.train()
             epoch_loss = 0.0
             num_batches = 0
-            
+            # TODO: kinda hackyDynamically determine the total number of batches
+            batch_count = 0
             with BatchMemoryManager(
                 data_loader=train_loader,
                 max_physical_batch_size=128,
                 optimizer=optimizer_ae
             ) as memory_safe_data_loader:
-                for batch_data in memory_safe_data_loader:
+                for _ in memory_safe_data_loader:
+                    batch_count += 1
+
+            # TODO: this is kinda hacky, and is not updating the correct batch 
+            if batch_task is not None:
+                progress.remove_task(batch_task)
+            batch_task = progress.add_task(
+                f"Epoch {epoch + 1}/{n_epochs}: Training Batches",
+                total=batch_count
+            )
+            with BatchMemoryManager(
+                data_loader=train_loader,
+                max_physical_batch_size=128,
+                optimizer=optimizer_ae
+            ) as memory_safe_data_loader:
+                for batch_idx, batch_data in enumerate(memory_safe_data_loader):                    
                     optimizer_ae.zero_grad()
                     batch_input = batch_data[0].to(device)
-                    
                     outputs, _, mu_z, logvar_z = ae(batch_input)
 
                     disc_loss, num_loss = auto_loss(
@@ -626,16 +747,20 @@ def train_dp_autoencoder(
 
                     loss_Auto = num_loss + disc_loss + beta * loss_kld
                     loss_Auto.backward()
-                    
+
                     optimizer_ae.step()
-
-
+                    epoch_loss += loss_Auto.item()
+                    num_batches += 1
+                    progress.update(
+                        batch_task,
+                        advance=1,
+                        description=f"Batch {batch_idx + 1}/{batch_count} - Loss: {loss_Auto.item():.4f}"
+                    )
             epsilon = privacy_engine.get_epsilon(delta)
-
             progress.update(
                 training_task,
                 advance=1,
-                description=f"Epoch {epoch}/{n_epochs} - Loss: {loss_Auto.item():.4f} - ε: {epsilon:.2f}",
+                description=f"Epoch {epoch + 1}/{n_epochs} - Avg Loss: {epoch_loss / num_batches:.4f} - ε: {epsilon:.2f}",
             )
 
             if loss_Auto < best_train_loss:
@@ -647,9 +772,9 @@ def train_dp_autoencoder(
                     if beta > min_beta:
                         beta = beta * lambd
 
-            losses.append(loss_Auto.item())
-            recons_loss.append(num_loss.item() + disc_loss.item())
-            KL_loss.append(loss_kld.item())
+            # losses.append(loss_Auto.item())
+            # recons_loss.append(num_loss.item() + disc_loss.item())
+            # KL_loss.append(loss_kld.item())
 
     output, latent_features, _, _ = ae(processed_data)
 
