@@ -1,17 +1,31 @@
 #!/bin/bash
 
-# Create output directories for different epsilon values
-mkdir -p experiments/single_sequence/dp_0.1
-mkdir -p experiments/single_sequence/dp_0.5
-mkdir -p experiments/single_sequence/dp_1.0
-mkdir -p experiments/single_sequence/dp_2.0
-mkdir -p experiments/single_sequence/dp_5.0
+# Define arrays for datasets and epsilon values
+declare -a SINGLE_SEQUENCE_DATASETS=(
+    "AirQuality"
+    "Hurricane"
+    "Metro_Traffic"
+    "Pollution Data"
+)
 
-mkdir -p experiments/multi_sequence/dp_0.1
-mkdir -p experiments/multi_sequence/dp_0.5
-mkdir -p experiments/multi_sequence/dp_1.0
-mkdir -p experiments/multi_sequence/dp_2.0
-mkdir -p experiments/multi_sequence/dp_5.0
+declare -a MULTI_SEQUENCE_DATASETS=(
+    "card_fraud:User"
+    "nasdaq100_2019:Symbol"
+)
+
+declare -a EPSILON_VALUES=(
+    "0.1"
+    "0.5"
+    "1.0"
+    "2.0"
+    "5.0"
+)
+
+# Create output directories
+for epsilon in "${EPSILON_VALUES[@]}"; do
+    mkdir -p "experiments/single_sequence/dp_${epsilon}"
+    mkdir -p "experiments/multi_sequence/dp_${epsilon}"
+done
 
 # Function to run experiment with cleanup
 run_dp_experiment() {
@@ -21,66 +35,47 @@ run_dp_experiment() {
     sleep 5  # Give time for GPU memory to fully clear
 }
 
-# Single-sequence datasets with different epsilon values
+# Function to format dataset name for file paths
+format_dataset_name() {
+    echo "$1" | tr ' ' '_' | tr '[:upper:]' '[:lower:]'
+}
+
 echo "Running single-sequence DP experiments..."
 
-# AirQuality
-
-echo "Running AirQuality"
-run_dp_experiment \
-    --dataset "Dataset/Single-Sequence/AirQuality.csv" \
-    --save_path "experiments/single_sequence/dp/airquality_model.pt" \
-    --output_dir "experiments/single_sequence/dp/airquality_samples" \
-    --use_dp 
-
-# Hurricane
-echo "Running Hurricane"
-run_dp_experiment \
-    --dataset "Dataset/Single-Sequence/Hurricane.csv" \
-    --save_path "experiments/single_sequence/dp/hurricane_model.pt" \
-    --output_dir "experiments/single_sequence/dp/hurricane_samples" \
-    --use_dp
-
-# Metro Traffic
-echo "Running Metro Traffic"
-run_dp_experiment \
-    --dataset "Dataset/Single-Sequence/Metro_Traffic.csv" \
-    --save_path "experiments/single_sequence/dp/metro_traffic_model.pt" \
-    --output_dir "experiments/single_sequence/dp/metro_traffic_samples" \
-    --use_dp
-
-# Pollution Data
-echo "Running Pollution Data"
-run_dp_experiment \
-    --dataset "Dataset/Single-Sequence/Pollution Data.csv" \
-    --save_path "experiments/single_sequence/dp/pollution_model.pt" \
-    --output_dir "experiments/single_sequence/dp/pollution_samples" \
-    --use_dp
+# Process single-sequence datasets
+for dataset in "${SINGLE_SEQUENCE_DATASETS[@]}"; do
+    echo "Running ${dataset}"
+    formatted_name=$(format_dataset_name "$dataset")
+    
+    for epsilon in "${EPSILON_VALUES[@]}"; do
+        run_dp_experiment \
+            --dataset "Dataset/Single-Sequence/${dataset}.csv" \
+            --save_path "experiments/single_sequence/dp_${epsilon}/${formatted_name}_model.pt" \
+            --output_dir "experiments/single_sequence/dp_${epsilon}" \
+            --use_dp
+    done
+done
 
 echo "Single-sequence DP experiments completed."
-
-# Multi-sequence datasets
 echo "Running multi-sequence DP experiments..."
 
-# Card Fraud
-echo "Running Card Fraud"
-run_dp_experiment \
-    --dataset "Dataset/Multi-Sequence Data/card_fraud.csv" \
-    --multi_sequence \
-    --column_to_partition "User" \
-    --save_path "experiments/multi_sequence/dp/card_fraud_model.pt" \
-    --output_dir "experiments/multi_sequence/dp/card_fraud_samples" \
-    --use_dp \
-
-# NASDAQ100
-echo "Running NASDAQ100"
-run_dp_experiment \
-    --dataset "Dataset/Multi-Sequence Data/nasdaq100_2019.csv" \
-    --multi_sequence \
-    --column_to_partition "Symbol" \
-    --save_path "experiments/multi_sequence/dp/nasdaq_model.pt" \
-    --output_dir "experiments/multi_sequence/dp/nasdaq_samples" \
-    --use_dp \
+# Process multi-sequence datasets
+for dataset_info in "${MULTI_SEQUENCE_DATASETS[@]}"; do
+    # Split dataset info into name and partition column
+    IFS=':' read -r dataset partition_col <<< "$dataset_info"
+    echo "Running ${dataset}"
+    formatted_name=$(format_dataset_name "$dataset")
+    
+    for epsilon in "${EPSILON_VALUES[@]}"; do
+        run_dp_experiment \
+            --dataset "Dataset/Multi-Sequence Data/${dataset}.csv" \
+            --multi_sequence \
+            --column_to_partition "${partition_col}" \
+            --save_path "experiments/multi_sequence/dp_${epsilon}/${formatted_name}_model.pt" \
+            --output_dir "experiments/multi_sequence/dp_${epsilon}" \
+            --use_dp
+    done
+done
 
 echo "Multi-sequence DP experiments completed."
 echo "All DP experiments completed successfully!"
