@@ -35,7 +35,7 @@ def start_vae_pretraining(processed_data, time_info, real_df, real_df1, column_t
     print('finished pre-training')
 
 
-def start_training(processed_data, time_info, real_df, real_df1, column_to_partition, threshold, output_directory, save_file_name):
+def start_training(processed_data, time_info, real_df, real_df1, column_to_partition, threshold, output_directory, save_file_name, pretrained_weights_dir):
     device = 'cuda'; 
     # # Auto-encoder Training
     # n_epochs = 20000; eps = 1e-5
@@ -47,22 +47,17 @@ def start_training(processed_data, time_info, real_df, real_df1, column_to_parti
     # ds = tae.train_autoencoder(real_df1, processed_data, channels, hidden_size, num_layers, lr, weight_decay, n_epochs, \
     #                         batch_size, threshold,  min_beta, max_beta, emb_dim, time_dim, lat_dim, device)
 
-
-    pretrained_weights = {
-    "encoder": "path/to/save_pretrained_models/pretrained_encoder.pth",
-    "decoder": "path/to/save_pretrained_models/pretrained_decoder.pth"
-    }
-
-    # Pass these weights to the fine-tune function
-    ae, latent_features, losses = tae.fine_tune_autoencoder(
-        real_df1, processed_data, pretrained_weights, channels=64, hidden_size=200, num_layers=1, lr=1e-4, 
-        weight_decay=1e-6, n_epochs=5000, batch_size=50, threshold=threshold, min_beta=1e-5, 
+    
+    # Call fine-tune autoencoder with pre-trained weights
+    # ae, latent_features, losses
+    ds = tae.fine_tune_autoencoder(
+        real_df1, processed_data, pretrained_weights_dir, channels=64, hidden_size=200, num_layers=1, lr=1e-4,
+        weight_decay=1e-6, n_epochs=5000, batch_size=50, threshold=threshold, min_beta=1e-5,
         max_beta=0.1, emb_dim=128, time_dim=8, lat_dim=7, device='cuda'
     )
 
-
     # Diffusion Training
-    latent_features = ds[1];
+    latent_features = ds[1]
     hidden_dim = 250; num_layers = 2; diffusion_steps = 100; n_epochs = 20000; num_classes = len(latent_features)
     diff = ctdf.train_diffusion(latent_features, time_info.to(device), hidden_dim, num_layers, diffusion_steps, n_epochs, num_classes)
 
@@ -123,14 +118,16 @@ def start_training(processed_data, time_info, real_df, real_df1, column_to_parti
 def main():
     print("Main function started")
     parser = argparse.ArgumentParser()
-    parser.add_argument('--pretrain', type=bool, help="epileptic, others")
-    parser.add_argument('--data', type=str, help="epileptic, others")
+    parser.add_argument('--pretrain', type=str, help="epileptic, others")
+    parser.add_argument('--data', type=str, help="epileptic, nasdaq, card_fraud, others")
     args = parser.parse_args()
+    args.pretrain = args.pretrain.lower() == 'true'
     print(f"Received data argument: {args.data}")
 
     main_start_time = time.time()  # Start time tracking
     train_dir = '/arc/project/st-mijungp-1/wangzn/'
     output_directory = '/scratch/st-mijungp-1/wangzn/TAD_output'
+    save_dir = 'TimeAutoDiff/Models/nasdaq_pretrained'
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
 
@@ -145,11 +142,9 @@ def main():
             # Pre-processing Data
             threshold = 1; column_to_partition = 'Symbol'
             processed_data, time_info = dp.partition_multi_seq(real_df, threshold, column_to_partition);
-            save_dir = 'TimeAutoDiff/Models/nasdaq_pretrained'
             start_vae_pretraining(processed_data, time_info, real_df, real_df1, column_to_partition, threshold, save_dir)
-
-
     else: 
+        print('start finetuning...')
         if args.data == 'epileptic':
             print(f"*****Dataset: epi") 
             file_path = os.path.join(train_dir,'Epileptic/data_unpivoted.csv')
@@ -164,7 +159,7 @@ def main():
             processed_data, time_info = dp.partition_multi_seq_sec(real_df, threshold, column_to_partition)
             print(f"******Start training: epi") 
             save_file_name = 'epi.png'
-            start_training(processed_data, time_info, real_df, real_df1, column_to_partition, threshold, output_directory, save_file_name)
+            start_training(processed_data, time_info, real_df, real_df1, column_to_partition, threshold, output_directory, save_file_name, save_dir)
             
         if args.data == 'nasdaq':
             file_path = os.path.join(train_dir,'TimeAutoDiff/Dataset/Multi-Sequence/nasdaq100_2019.csv')
@@ -178,7 +173,22 @@ def main():
             processed_data, time_info = dp.partition_multi_seq(real_df, threshold, column_to_partition);
 
             save_file_name = 'nasdaq.png'
-            start_training(processed_data, time_info, real_df, real_df1, column_to_partition, threshold, output_directory, save_file_name)
+            start_training(processed_data, time_info, real_df, real_df1, column_to_partition, threshold, output_directory, save_file_name, save_dir)
+
+        if args.data == 'card_fraud':
+                    file_path = os.path.join(train_dir,'TimeAutoDiff/Dataset/Multi-Sequence/card_fraud.csv')
+
+                    print(file_path)
+                    real_df = pd.read_csv(file_path)
+                    real_df1 = real_df.drop('date', axis=1)
+
+                    # Pre-processing Data
+                    threshold = 1; column_to_partition = 'User'
+                    processed_data, time_info = dp.partition_multi_seq(real_df, threshold, column_to_partition);
+
+                    save_file_name = 'card_fraud.png'
+                    start_training(processed_data, time_info, real_df, real_df1, column_to_partition, threshold, output_directory, save_file_name, save_dir)
+
 
     # End time tracking
     elapsed_time = time.time() - main_start_time

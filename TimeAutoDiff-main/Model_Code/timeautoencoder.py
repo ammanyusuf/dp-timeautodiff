@@ -611,3 +611,93 @@ def train_dp_autoencoder(
         print(f"Saved model to {save_path}")
 
     return (ae, latent_features.detach(), output, losses, recons_loss, mu_z, logvar_z, epsilon)
+
+
+
+
+def pre_train_vae(public_df, processed_data, channels, hidden_size, num_layers, lr, weight_decay, n_epochs, batch_size, threshold, emb_dim, time_dim, lat_dim, save_dir, device):
+    """
+    Pre-trains a Variational Autoencoder (VAE) on a public dataset and saves the encoder/decoder weights.
+
+    Args:
+        public_df: Public dataset for pre-training.
+        processed_data: Tensor representation of the public dataset.
+        channels: Number of channels in the VAE architecture.
+        hidden_size: Hidden size for GRU layers.
+        num_layers: Number of GRU layers.
+        lr: Learning rate.
+        weight_decay: Weight decay for regularization.
+        n_epochs: Number of training epochs.
+        batch_size: Batch size.
+        threshold: Threshold for preprocessing.
+        emb_dim: Embedding dimension.
+        time_dim: Time embedding dimension.
+        lat_dim: Latent space dimension.
+        save_dir: Directory to save the pre-trained models.
+        device: Device to run training on ('cuda' or 'cpu').
+    Returns:
+        None
+    """
+    import os
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Parse and preprocess the public dataset
+    parser = pce.DataFrameParser().fit(public_df, threshold)
+    data = parser.transform()
+    data = torch.tensor(data.astype('float32')).unsqueeze(0)
+        
+    datatype_info = parser.datatype_info()
+    n_bins = datatype_info['n_bins']
+    n_cats = datatype_info['n_cats']
+    n_nums = datatype_info['n_nums']
+    cards = datatype_info['cards']
+    
+    N, seq_len, input_size = processed_data.shape
+    ae = DeapStack(channels, batch_size, seq_len, n_bins, n_cats, n_nums, cards, input_size, hidden_size, num_layers, emb_dim, time_dim, lat_dim).to(device)
+    
+    optimizer_ae = Adam(ae.parameters(), lr=lr, weight_decay=weight_decay)
+
+    inputs = processed_data.to(device)
+    beta = 0.1  # You can adjust this or keep it fixed for pre-training
+    best_train_loss = float('inf')
+    all_indices = list(range(N))
+    
+    with Progress() as progress:
+        training_task = progress.add_task("[blue]Pre-Training VAE...", total=n_epochs)
+
+        for epoch in range(n_epochs):
+            # Sample a batch of data
+            batch_indices = random.sample(all_indices, batch_size)
+            batch_data = inputs[batch_indices, :, :]
+            
+            optimizer_ae.zero_grad()
+            outputs, _, mu_z, logvar_z = ae(batch_data)
+            
+            # Compute losses
+            disc_loss, num_loss = auto_loss(batch_data, outputs, n_bins, n_nums, n_cats, beta, cards)
+            temp = 1 + logvar_z - mu_z.pow(2) - logvar_z.exp()
+            loss_kld = -0.5 * torch.mean(temp.mean(-1).mean())
+            loss_Auto = num_loss + disc_loss + beta * loss_kld
+
+            # Backpropagation and optimizer step
+            loss_Auto.backward()
+            optimizer_ae.step()
+
+            progress.update(training_task, advance=1, description=f"Epoch {epoch}/{n_epochs} - Loss: {loss_Auto.item():.4f}")
+
+            # Update best loss
+            if loss_Auto < best_train_loss:
+                best_train_loss = loss_Auto
+
+    # Save pre-trained weights
+    torch.save({
+        'encoder_mu': ae.encoder_mu.state_dict(),
+        'encoder_logvar': ae.encoder_logvar.state_dict(),
+        'fc_mu': ae.fc_mu.state_dict(),
+        'fc_logvar': ae.fc_logvar.state_dict(),
+    }, os.path.join(save_dir, "pretrained_encoder.pth"))
+
+    torch.save(ae.decoder_mlp.state_dict(), os.path.join(save_dir, "pretrained_decoder.pth"))
+    print(f"Pre-trained VAE saved to {save_dir}")
+
+

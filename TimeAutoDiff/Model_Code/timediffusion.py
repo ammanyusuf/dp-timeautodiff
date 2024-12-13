@@ -171,7 +171,7 @@ def get_loss(model, x, t, time_info = None):
 
 #####################################################################################################################
 import copy
-import tqdm.notebook
+from tqdm import trange
 import random
 
 def train_diffusion(latent_features, time_info, hidden_dim, num_layers, diffusion_steps, n_epochs):
@@ -187,7 +187,8 @@ def train_diffusion(latent_features, time_info, hidden_dim, num_layers, diffusio
     batch_size = diffusion_steps
 
     all_indices = list(range(x.shape[0]))
-    tqdm_epoch = tqdm.notebook.trange(n_epochs)
+    # Use a terminal-compatible progress bar
+    tqdm_epoch = trange(n_epochs, desc="Training Diffusion Model")
 
     for epoch in tqdm_epoch:
         batch_indices = random.sample(all_indices, batch_size)
